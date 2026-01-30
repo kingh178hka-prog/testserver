@@ -1,8 +1,10 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'dart:math';
 import 'dart:ui' as ui;
 import 'dart:html' as html;
+import 'dart:convert';
 
 void main() {
   runApp(const LottoApp());
@@ -38,6 +40,8 @@ class _LottoHomePageState extends State<LottoHomePage> with TickerProviderStateM
   late AnimationController _popController;
   late AnimationController _iconController;
   final GlobalKey _repaintKey = GlobalKey();
+  Map<int, int> _numberFrequency = {};
+  bool _useStatistics = false;
 
   @override
   void initState() {
@@ -50,6 +54,28 @@ class _LottoHomePageState extends State<LottoHomePage> with TickerProviderStateM
       duration: const Duration(milliseconds: 2000),
       vsync: this,
     )..repeat();
+    _loadLottoData();
+  }
+
+  Future<void> _loadLottoData() async {
+    try {
+      final String data = await rootBundle.loadString('assets/result.txt');
+      final List<dynamic> results = json.decode(data);
+      
+      Map<int, int> frequency = {};
+      for (var result in results) {
+        for (int i = 1; i <= 6; i++) {
+          int number = result['tm${i}WnNo'];
+          frequency[number] = (frequency[number] ?? 0) + 1;
+        }
+      }
+      
+      setState(() {
+        _numberFrequency = frequency;
+      });
+    } catch (e) {
+      print('Error loading lotto data: $e');
+    }
   }
 
   @override
@@ -69,9 +95,16 @@ class _LottoHomePageState extends State<LottoHomePage> with TickerProviderStateM
 
     // 5세트 생성
     for (int i = 0; i < 5; i++) {
-      List<int> allNumbers = List.generate(45, (index) => index + 1);
-      allNumbers.shuffle(_random);
-      List<int> numbers = allNumbers.take(6).toList();
+      List<int> numbers;
+      
+      if (_useStatistics && _numberFrequency.isNotEmpty) {
+        numbers = _generateStatisticalNumbers();
+      } else {
+        List<int> allNumbers = List.generate(45, (index) => index + 1);
+        allNumbers.shuffle(_random);
+        numbers = allNumbers.take(6).toList();
+      }
+      
       numbers.sort();
       
       setState(() {
@@ -85,6 +118,35 @@ class _LottoHomePageState extends State<LottoHomePage> with TickerProviderStateM
     setState(() {
       _isGenerating = false;
     });
+  }
+
+  List<int> _generateStatisticalNumbers() {
+    // 빈도순 정렬
+    var sortedEntries = _numberFrequency.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    
+    // 가장 많이 나온 10개
+    List<int> topNumbers = sortedEntries.take(10).map((e) => e.key).toList();
+    // 가장 적게 나온 숫자들
+    List<int> bottomNumbers = sortedEntries.reversed.take(10).map((e) => e.key).toList();
+    // 중간 범위 숫자들
+    List<int> middleNumbers = sortedEntries.skip(10).take(sortedEntries.length - 20).map((e) => e.key).toList();
+    
+    List<int> selected = [];
+    
+    // 가장 많이 나온 숫자 중 2개
+    topNumbers.shuffle(_random);
+    selected.addAll(topNumbers.take(2));
+    
+    // 가장 적게 나온 숫자 중 2개
+    bottomNumbers.shuffle(_random);
+    selected.addAll(bottomNumbers.take(2));
+    
+    // 중간 범위 숫자 중 2개
+    middleNumbers.shuffle(_random);
+    selected.addAll(middleNumbers.take(2));
+    
+    return selected;
   }
 
   Future<void> _downloadImage() async {
@@ -162,9 +224,32 @@ class _LottoHomePageState extends State<LottoHomePage> with TickerProviderStateM
       ),
       body: Column(
         children: [
+          // 통계 모드 토글
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Text('랜덤', style: TextStyle(fontSize: 16)),
+                const SizedBox(width: 10),
+                Switch(
+                  value: _useStatistics,
+                  onChanged: _numberFrequency.isEmpty ? null : (value) {
+                    setState(() {
+                      _useStatistics = value;
+                    });
+                  },
+                  activeColor: Colors.deepPurple,
+                ),
+                const SizedBox(width: 10),
+                const Text('통계 기반 🔥', style: TextStyle(fontSize: 16)),
+              ],
+            ),
+          ),
+          
           // 번호 생성 버튼
           Padding(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.symmetric(horizontal: 20),
             child: ElevatedButton.icon(
               onPressed: _isGenerating ? null : _generateNumbers,
               icon: _isGenerating 
@@ -174,7 +259,11 @@ class _LottoHomePageState extends State<LottoHomePage> with TickerProviderStateM
                     child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                   )
                 : const Icon(Icons.casino),
-              label: Text(_isGenerating ? '생성 중...' : '행운의 번호 생성 (5세트)'),
+              label: Text(_isGenerating 
+                ? '생성 중...' 
+                : _useStatistics 
+                  ? '통계 기반 번호 생성 (5세트)' 
+                  : '행운의 번호 생성 (5세트)'),
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
                 textStyle: const TextStyle(fontSize: 18),
