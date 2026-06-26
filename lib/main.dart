@@ -40,14 +40,6 @@ class LottoApp extends StatelessWidget {
   }
 }
 
-class RecentWin {
-  final int episode;
-  final List<int> numbers;
-  final int bonus;
-  final String date;
-  RecentWin({required this.episode, required this.numbers, required this.bonus, required this.date});
-}
-
 class LottoHomePage extends StatefulWidget {
   const LottoHomePage({super.key});
 
@@ -62,7 +54,6 @@ class _LottoHomePageState extends State<LottoHomePage> with TickerProviderStateM
   final GlobalKey _repaintKey = GlobalKey();
   Map<int, int> _frequency = {};
   bool _useStatistics = false;
-  List<RecentWin> _recentWins = [];
   final List<AnimationController> _cardControllers = [];
 
   @override
@@ -77,29 +68,16 @@ class _LottoHomePageState extends State<LottoHomePage> with TickerProviderStateM
       final List<dynamic> entries = json.decode(raw);
 
       final Map<int, int> freq = {};
-      final List<RecentWin> wins = [];
 
       for (final e in entries) {
         for (int i = 1; i <= 6; i++) {
           final n = e['tm${i}WnNo'] as int;
           freq[n] = (freq[n] ?? 0) + 1;
         }
-        wins.add(RecentWin(
-          episode: e['ltEpsd'] as int,
-          numbers: [
-            e['tm1WnNo'] as int, e['tm2WnNo'] as int, e['tm3WnNo'] as int,
-            e['tm4WnNo'] as int, e['tm5WnNo'] as int, e['tm6WnNo'] as int,
-          ],
-          bonus: e['bnsWnNo'] as int,
-          date: e['ltRflYmd']?.toString() ?? '',
-        ));
       }
-
-      wins.sort((a, b) => b.episode.compareTo(a.episode));
 
       setState(() {
         _frequency = freq;
-        _recentWins = wins.take(5).toList();
       });
     } catch (e) {
       debugPrint('Data load error: $e');
@@ -158,22 +136,45 @@ class _LottoHomePageState extends State<LottoHomePage> with TickerProviderStateM
     return all.take(6).toList();
   }
 
+  // 색상 구간별 1개씩 + 나머지 1개 전체 풀에서 가중치 랜덤
   List<int> _weightedRandom() {
-    final selected = <int>{};
-    final nums = List.generate(45, (i) => i + 1);
-    final weights = nums.map((n) => (_frequency[n] ?? 0) + 1.0).toList();
-    final total = weights.fold(0.0, (s, w) => s + w);
+    const zones = [
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+      [11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+      [21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
+      [31, 32, 33, 34, 35, 36, 37, 38, 39, 40],
+      [41, 42, 43, 44, 45],
+    ];
 
-    while (selected.length < 6) {
-      double pick = _random.nextDouble() * total;
-      for (int i = 0; i < nums.length; i++) {
-        pick -= weights[i];
-        if (pick <= 0) {
-          selected.add(nums[i]);
-          break;
+    final selected = <int>{};
+
+    for (final zone in zones) {
+      final weights = zone.map((n) => (_frequency[n] ?? 0) + 1.0).toList();
+      final total = weights.fold(0.0, (s, w) => s + w);
+      int pick;
+      do {
+        double r = _random.nextDouble() * total;
+        pick = zone.last;
+        for (int i = 0; i < zone.length; i++) {
+          r -= weights[i];
+          if (r <= 0) { pick = zone[i]; break; }
         }
-      }
+      } while (selected.contains(pick));
+      selected.add(pick);
     }
+
+    // 6번째: 아직 선택 안 된 번호 중 가중치 랜덤
+    final remaining = List.generate(45, (i) => i + 1).where((n) => !selected.contains(n)).toList();
+    final rWeights = remaining.map((n) => (_frequency[n] ?? 0) + 1.0).toList();
+    final rTotal = rWeights.fold(0.0, (s, w) => s + w);
+    double r = _random.nextDouble() * rTotal;
+    int extra = remaining.last;
+    for (int i = 0; i < remaining.length; i++) {
+      r -= rWeights[i];
+      if (r <= 0) { extra = remaining[i]; break; }
+    }
+    selected.add(extra);
+
     return selected.toList();
   }
 
@@ -225,7 +226,6 @@ class _LottoHomePageState extends State<LottoHomePage> with TickerProviderStateM
           children: [
             _header(),
             _modeToggle(),
-            if (_recentWins.isNotEmpty) _recentWinsRow(),
             Expanded(child: _body()),
             _bottomBar(),
           ],
@@ -291,7 +291,7 @@ class _LottoHomePageState extends State<LottoHomePage> with TickerProviderStateM
         padding: const EdgeInsets.all(3),
         child: Row(children: [
           _toggleBtn('랜덤', false),
-          _toggleBtn('통계 기반 🔥', true),
+          _toggleBtn('통계 기반', true),
         ]),
       ),
     );
@@ -316,83 +316,6 @@ class _LottoHomePageState extends State<LottoHomePage> with TickerProviderStateM
               fontWeight: active ? FontWeight.w700 : FontWeight.w400,
               color: active ? Colors.white : const Color(0xFF6B7280),
             ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _recentWinsRow() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Padding(
-          padding: EdgeInsets.fromLTRB(16, 2, 16, 6),
-          child: Text('최근 당첨번호',
-            style: TextStyle(fontSize: 12, color: Color(0xFF6B7280), fontWeight: FontWeight.w600, letterSpacing: 0.3)),
-        ),
-        SizedBox(
-          height: 68,
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            itemCount: _recentWins.length,
-            itemBuilder: (_, i) {
-              final w = _recentWins[i];
-              return Container(
-                margin: const EdgeInsets.only(right: 8),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1A1F3C),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFF2D3460), width: 1),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('${w.episode}회',
-                      style: const TextStyle(fontSize: 10, color: Color(0xFFFFD700), fontWeight: FontWeight.w700)),
-                    const SizedBox(height: 5),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        ...w.numbers.map((n) => _miniball(n, false)),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 2),
-                          child: Text('+', style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 9)),
-                        ),
-                        _miniball(w.bonus, true),
-                      ],
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-        ),
-        const SizedBox(height: 6),
-      ],
-    );
-  }
-
-  Widget _miniball(int n, bool isBonus) {
-    final c = _ballColor(n);
-    return Container(
-      width: 24,
-      height: 24,
-      margin: const EdgeInsets.only(right: 3),
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: isBonus ? c.withOpacity(0.15) : c,
-        border: isBonus ? Border.all(color: c, width: 1.5) : null,
-      ),
-      child: Center(
-        child: Text('$n',
-          style: TextStyle(
-            fontSize: 8.5,
-            fontWeight: FontWeight.w800,
-            color: isBonus ? c : Colors.white,
           ),
         ),
       ),
@@ -432,7 +355,7 @@ class _LottoHomePageState extends State<LottoHomePage> with TickerProviderStateM
 
   Widget _card(int i) {
     final nums = _numberSets[i];
-    const labels = ['가', '나', '다', '라', '마'];
+    const labels = ['A', 'B', 'C', 'D', 'E'];
     final card = Container(
       margin: const EdgeInsets.only(bottom: 9),
       decoration: BoxDecoration(
